@@ -78,8 +78,11 @@ w_sip(uint64 x)
 }
 
 // Supervisor Interrupt Enable
+// 负责 supervisor 级别的外部中断
 #define SIE_SEIE (1L << 9) // external
+// 负责 supervisor 级别的时钟中断
 #define SIE_STIE (1L << 5) // timer
+// 负责 supervisor 级别的软件中断
 #define SIE_SSIE (1L << 1) // software
 static inline uint64
 r_sie()

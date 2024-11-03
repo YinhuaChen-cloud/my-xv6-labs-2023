@@ -10,6 +10,7 @@ volatile static int started = 0;
 void
 main()
 {
+
   if(cpuid() == 0){
     consoleinit();
     printfinit();
@@ -29,11 +30,15 @@ main()
     fileinit();      // file table
     virtio_disk_init(); // emulated hard disk
     userinit();      // first user process
+    // 在调用这个函数之前的所有读写操作在这个函数之后的读写操作之前完成。
+    // 这意味着，所有在这个屏障之前的内存操作都不会被重排到这个屏障之后。
     __sync_synchronize();
     started = 1;
   } else {
     while(started == 0)
       ;
+    // 在调用这个函数之前的所有读写操作在这个函数之后的读写操作之前完成。
+    // 这意味着，所有在这个屏障之前的内存操作都不会被重排到这个屏障之后。
     __sync_synchronize();
     printf("hart %d starting\n", cpuid());
     kvminithart();    // turn on paging

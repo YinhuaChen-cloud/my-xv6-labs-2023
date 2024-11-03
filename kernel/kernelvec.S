@@ -97,12 +97,14 @@ timervec:
         # scratch[0,8,16] : register save area.
         # scratch[24] : address of CLINT's MTIMECMP register.
         # scratch[32] : desired interval between interrupts.
-        
+
+        # 把 a0 的值读入 mscratch, 把 mscratch 的值读入 a0
         csrrw a0, mscratch, a0
         sd a1, 0(a0)
         sd a2, 8(a0)
         sd a3, 16(a0)
 
+        # 设置下一个时钟中断的时间
         # schedule the next timer interrupt
         # by adding interval to mtimecmp.
         ld a1, 24(a0) # CLINT_MTIMECMP(hart)
@@ -113,12 +115,19 @@ timervec:
 
         # arrange for a supervisor software interrupt
         # after this handler returns.
+        # An interrupt i will trap to S-mode if both of the following are true: (a) either the current privilege mode
+        # is S and the SIE bit in the sstatus register is set, or the current privilege mode has less privilege than
+        # S-mode; and (b) bit i is set in both sip and sie.
+        # 这里的 2 是 10，也就是 supervisor software interrupt
         li a1, 2
         csrw sip, a1
 
         ld a3, 16(a0)
         ld a2, 8(a0)
         ld a1, 0(a0)
+        # 把 a0 的值读入 mscratch, 把 mscratch 的值读入 a0
+        # TODO: 必须要这么做，supervisor software interrupt 才会被 trap to S mode 吗？
         csrrw a0, mscratch, a0
 
+        # 从 machine mode 返回
         mret
