@@ -1,5 +1,6 @@
 #include "kernel/types.h" // user.h 自定义了数据类型
 #include "user/user.h"
+#include <stddef.h>
 
 // 1. 创建一个子进程
 // 2. 接受父进程的数据，打印第一个数据

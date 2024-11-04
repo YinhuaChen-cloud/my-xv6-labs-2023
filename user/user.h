@@ -39,3 +39,13 @@ void free(void*);
 int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
+
+#define assert(condition)                          \
+    do {                                           \
+        if (!(condition)) {                        \
+            fprintf(2, "Assertion failed: %s, file %s, line %d\n", \
+                #condition, __FILE__, __LINE__);   \
+            exit(134);                             \
+        }                                          \
+    } while (0)
+

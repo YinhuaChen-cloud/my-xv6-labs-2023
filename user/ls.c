@@ -49,6 +49,7 @@ ls(char *path)
     break;
 
   case T_DIR:
+    // sizeof 对变量和数组使用可以不使用括号
     if(strlen(path) + 1 + DIRSIZ + 1 > sizeof buf){
       printf("ls: path too long\n");
       break;
