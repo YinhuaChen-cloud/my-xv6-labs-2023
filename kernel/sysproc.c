@@ -91,3 +91,21 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// 当调用 trace 的 pid 还存活时，打印 syscall trace，该 pid 死后，不再打印
+uint64
+sys_trace(void)
+{
+  int syscall_mask;
+  struct proc *p = myproc();
+
+  // 根据源码，是根据第一个参数来决定获取 trapframe 的 a0/a1/a2/a3...
+  // trapframe 的 a0/a1/a2/3... 就是系统调用时使用的参数，由用户空间设置
+  argint(0, &syscall_mask);
+
+  // 根据 syscall_mask 设置当前进程的 syscall_mask
+  p->syscall_mask = syscall_mask;
+
+  // 永远成功
+  return 0;
+}

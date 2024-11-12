@@ -146,6 +146,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // 初始化 syscall_mask
+  p->syscall_mask = 0;
+
   return p;
 }
 
@@ -287,6 +290,9 @@ fork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
+
+  // 子进程要继承父进程的 syscall_mask
+  np->syscall_mask = p->syscall_mask;
 
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
