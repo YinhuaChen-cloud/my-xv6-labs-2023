@@ -692,3 +692,18 @@ procdump(void)
     printf("\n");
   }
 }
+
+// 获取 used process 数量
+uint64
+count_used_process(void)
+{
+  struct proc *p;
+  uint64 used_process = 0;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->state != UNUSED) 
+        used_process++;
+  }
+
+  return used_process;
+}

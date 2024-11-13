@@ -80,3 +80,23 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
+// 统计空闲页数量
+uint64
+count_free_pages(void)
+{
+  struct run *r;
+  uint32 free_count = 0;
+
+  // 统计的时候，获取锁，防止返回错误数据
+  acquire(&kmem.lock);
+  r = kmem.freelist;
+  while(r) {
+    r = r->next;
+    free_count++;
+  }
+  release(&kmem.lock);
+
+  return free_count;
+}
+

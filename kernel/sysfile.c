@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "sysinfo.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -504,3 +505,29 @@ sys_pipe(void)
   return 0;
 }
 
+// 收集计算机系统的 freemem 和 USED process 等信息，并返回给用户空间
+uint64
+sys_sysinfo(void) {
+
+  // 获取当前进程指针
+  struct proc *p = myproc();
+ 
+  // 用来存放信息的 sysinfo结构体
+  struct sysinfo srcinfo;
+  // 获取空闲内存的字节数量
+  uint64 free_bytes = PGSIZE * count_free_pages();
+  // 获取 USED PROCESS 数量
+  uint64 used_process = count_used_process();
+  // 填满结构体
+  srcinfo.freemem = free_bytes;
+  srcinfo.nproc = used_process;
+
+  // 用户空间 sysinfo结构体 地址
+  uint64 dstinfo_p;
+  // 根据参数，读取用户空间指针地址
+  argaddr(0, &dstinfo_p);
+  // 把内核内存拷贝到用户内存 (sysinfo 调用的返回值与 copyout 相同) 
+  // 0 表示成功，1表示失败
+  return copyout(p->pagetable, dstinfo_p, (char *)&srcinfo, sizeof(struct sysinfo));
+    
+}

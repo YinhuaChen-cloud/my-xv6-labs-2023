@@ -93,6 +93,7 @@ sys_uptime(void)
 }
 
 // 当调用 trace 的 pid 还存活时，打印 syscall trace，该 pid 死后，不再打印
+// 会打印 pid 进程的子进程的 trace
 uint64
 sys_trace(void)
 {
@@ -106,6 +107,6 @@ sys_trace(void)
   // 根据 syscall_mask 设置当前进程的 syscall_mask
   p->syscall_mask = syscall_mask;
 
-  // 永远成功
+  // 目前不考虑失败情况
   return 0;
 }
