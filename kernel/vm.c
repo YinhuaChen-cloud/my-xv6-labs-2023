@@ -9,43 +9,56 @@
 /*
  * the kernel's page table.
  */
+// 全局变量: 内核页表，用来管理内核虚拟内存
 pagetable_t kernel_pagetable;
 
+// 在 kernel.ld (编译内核 binary 所使用的链接脚本) 中，etext 指向内核代码的末尾
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
+// 指向 trampoline.S 汇编代码的开头
 extern char trampoline[]; // trampoline.S
 
 // Make a direct-map page table for the kernel.
+// 创建一个 direct-map 页表，返回页表指针
 pagetable_t
 kvmmake(void)
 {
   pagetable_t kpgtbl;
 
+  // 为内核页表分配一页，随后清空这一页
   kpgtbl = (pagetable_t) kalloc();
   memset(kpgtbl, 0, PGSIZE);
 
+  // direct-map 把 UART0 的地址映射到内核页表
   // uart registers
   kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
+  // direct-map 把 VIRTIO0 的地址映射到内核页表
   // virtio mmio disk interface
   kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
 
+  // 把 PLIC 地址直接映射到 内核页表
   // PLIC
   kvmmap(kpgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
 
+  // 直接映射内核代码，不过权限设置为仅可读可执行
   // map kernel text executable and read-only.
   kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
 
+  // 把内核的数据段映射成可读可写，也是直接映射
   // map kernel data and the physical RAM we'll make use of.
   kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
 
+  // trampoline.S 代码直接映射, 权限设置为仅可读可执行
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 
+  // xv6 一共支持 64 个进程，这里为每一个进程映射一个内核栈
   // allocate and map a kernel stack for each process.
   proc_mapstacks(kpgtbl);
   
+  // 返回内核页表指针
   return kpgtbl;
 }
 
@@ -53,6 +66,7 @@ kvmmake(void)
 void
 kvminit(void)
 {
+  // 给全局内核页表赋值
   kernel_pagetable = kvmmake();
 }
 
@@ -125,6 +139,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
   return pa;
 }
 
+// 专门用于给内核页表添加映射，不会 flush TLB，也不会开启页表地址翻译
 // add a mapping to the kernel page table.
 // only used when booting.
 // does not flush TLB or enable paging.
@@ -449,3 +464,37 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+// CYHADDED: 添加打印页表的函数，方便调试 ----------------------- start
+#ifdef LAB_PGTBL
+static int page_depth = 0;
+
+// Recursively print page-table pages.
+// All invalid PTEs will not be printed
+void
+vmprint(pagetable_t pagetable)
+{
+  if(page_depth == 0) {
+    printf("page table %p\n", (uint64)pagetable);
+  }
+  page_depth++;
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      // this is a valid PTE
+      uint64 child = PTE2PA(pte);
+      for(int k = 0; k < page_depth; k++) printf(" .."); 
+      printf("%d: pte 0x%p pa %p\n", i, pte, child);
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+        // this PTE points to a lower-level page table.
+        vmprint((pagetable_t)child);
+      }
+    }
+    // do not print invalid PTEs
+  }
+  page_depth--;
+}
+#endif
+// CYHADDED: 添加打印页表的函数，方便调试 ----------------------- end
+

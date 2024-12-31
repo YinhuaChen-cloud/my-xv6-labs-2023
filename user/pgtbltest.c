@@ -33,6 +33,7 @@ ugetpid_test()
   printf("ugetpid_test starting\n");
   testname = "ugetpid_test";
 
+  // 执行 64 次 fork，判断 getpid() 是否等于 ugetpid()
   for (i = 0; i < 64; i++) {
     int ret = fork();
     if (ret != 0) {

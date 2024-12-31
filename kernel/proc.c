@@ -132,6 +132,15 @@ found:
     return 0;
   }
 
+  // CYHADDED: Allocate a upage page and assign data --------------------------- start
+  if((p->upage = (struct usyscall *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  p->upage->pid = p->pid;
+  // CYHADDED: Allocate a upage page and assign data --------------------------- end
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -158,6 +167,13 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  // CYHADDED: free upage --------------- start
+  if(p->upage)
+    kfree((void*)p->upage);
+  p->upage = 0;
+  // CYHADDED: free upage --------------- end
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -202,6 +218,20 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+// CYHADDED: 增加 USYSCALL 的映射 ----------------------------- start
+#ifdef LAB_PGTBL
+  // 把 USYSCALL 映射到用户页表，加速部分系统调用
+  // 若出错，释放 TRAMPOLINE 和 TRAMPFRAME，再释放页表
+  if(mappages(pagetable, USYSCALL, PGSIZE,
+              (uint64)(p->upage), PTE_R | PTE_U) < 0){
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+#endif
+// CYHADDED: 增加 USYSCALL 的映射 ----------------------------- end
+
   return pagetable;
 }
 
@@ -212,6 +242,11 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+// CYHADDED: 移除 USYSCALL 的映射 ----------------------------- start
+#ifdef LAB_PGTBL
+  uvmunmap(pagetable, USYSCALL, 1, 0);
+#endif
+// CYHADDED: 移除 USYSCALL 的映射 ----------------------------- end
   uvmfree(pagetable, sz);
 }
 

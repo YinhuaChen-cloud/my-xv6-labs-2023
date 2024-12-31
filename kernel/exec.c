@@ -128,6 +128,10 @@ exec(char *path, char **argv)
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
 
+  // CYHADDED: 作业要求，打印第一个进程页表 --- start
+  if(p->pid==1) vmprint(p->pagetable);
+  // CYHADDED: 作业要求，打印第一个进程页表 --- end
+
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
  bad:
