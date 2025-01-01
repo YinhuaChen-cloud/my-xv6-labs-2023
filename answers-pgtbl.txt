@@ -1,0 +1,4 @@
+Which other xv6 system call(s) could be made faster using this shared page? Explain how.
+
+System calls that only involve querying data, especially those that do not change frequently during the process lifecycle, can be accelerated in this way.
+
