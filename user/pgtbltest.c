@@ -56,14 +56,19 @@ pgaccess_test()
   unsigned int abits;
   printf("pgaccess_test starting\n");
   testname = "pgaccess_test";
+  // 分配 32 页
   buf = malloc(32 * PGSIZE);
+  // 使用 pgaccess 获取 Access bits 存于 abits
   if (pgaccess(buf, 32, &abits) < 0)
     err("pgaccess failed");
+  // 对部分页进行写入
   buf[PGSIZE * 1] += 1;
   buf[PGSIZE * 2] += 1;
   buf[PGSIZE * 30] += 1;
+  // 再次使用 pgaccess 获取 Access bits 存于 abits
   if (pgaccess(buf, 32, &abits) < 0)
     err("pgaccess failed");
+  // 此时 abits 的内容应该如下
   if (abits != ((1 << 1) | (1 << 2) | (1 << 30)))
     err("incorrect access bits set");
   free(buf);

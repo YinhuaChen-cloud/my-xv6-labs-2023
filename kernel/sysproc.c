@@ -69,12 +69,55 @@ sys_sleep(void)
   return 0;
 }
 
-
 #ifdef LAB_PGTBL
 int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
+  // Be sure to clear PTE_A after checking if it is set. 
+  // Otherwise, it won't be possible to determine if the page 
+  // was accessed since the last time pgaccess() was called 
+  // (i.e., the bit will be set forever).
+
+  // read args
+  uint64 va;
+  int npage;
+  uint64 abits_addr;
+
+  argaddr(0, &va);
+  argint(1, &npage);
+  argaddr(2, &abits_addr);
+    
+  // the number of scanned pages cannot be more than 64
+  if(npage > 64) {
+    panic("npage > 64!");
+  }
+
+  // temporary buffer for output bitmask
+  uint64 aux_abits = 0;
+  
+  // update temporary buffer
+  // CYHNOTE: the first page corresponds to the least significant bit
+  // get the current process
+  struct proc* p = myproc();
+  for (int i = 0; i < npage; i++) {
+    pte_t *pte = walk(p->pagetable, va + i*PGSIZE, 0);
+    if(0 == pte)
+      panic("0 == pte");
+    if(!(*pte & PTE_V))
+      panic("!(*pte & PTE_V)");
+    if(*pte & PTE_A) {
+      aux_abits |= (1L << i);
+      // clear PTE_A after checking if it is set.
+      *pte &= ~(PTE_A);
+    }
+  }
+
+  // copy temporary buffer to the user
+  if(copyout(p->pagetable, abits_addr, (char *)&aux_abits, npage/8) < 0) {
+    panic("copyout");
+  }
+
   return 0;
 }
 #endif
