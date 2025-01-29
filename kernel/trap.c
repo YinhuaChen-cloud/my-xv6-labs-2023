@@ -50,7 +50,46 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  if(r_scause() == 0xf){
+    // store page fault
+    // stval stores the page addr
+    uint64 va, pa; 
+    pte_t *pte;
+    uint flags;
+    char *mem;
+
+    va = r_stval();
+
+    if((pte = walk(p->pagetable, va, 0)) == 0) {
+      panic("usertrap-pagefault: pte should exist");
+    }
+    flags = PTE_FLAGS(*pte);
+    pa = PTE2PA(*pte);
+    
+    if (flags & (1L << 9)) {
+      // if writable originally, allocate page with kalloc()
+      if((mem = kalloc()) == 0) {
+        // if kalloc() fail because of memory shortage, kill this process
+        setkilled(p);
+      }
+      else {
+        // else, copy the old page to the new page
+        // install the new page in the PTE with PTE_W set
+        // and clear RSW bits
+        memmove(mem, (char*)pa, PGSIZE);
+        flags |= PTE_W;
+        flags &= ~(3L << 8);
+        *pte = PA2PTE(mem) | flags | PTE_V;
+        // 这个进程已经断掉了和原来的 pa 的联系，为了防止内存泄漏，需要调用 kfree 释放
+        kfree((void *)pa);
+      }
+    }
+    else {
+      // else, kill this process
+      setkilled(p);
+    }
+  }
+  else if(r_scause() == 8){
     // system call
 
     if(killed(p))

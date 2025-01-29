@@ -176,6 +176,14 @@ r_stvec()
   return x;
 }
 
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x) );
+  return x;
+}
+
 // Machine-mode interrupt vector
 static inline void 
 w_mtvec(uint64 x)

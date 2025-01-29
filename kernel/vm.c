@@ -22,6 +22,7 @@ kvmmake(void)
   pagetable_t kpgtbl;
 
   kpgtbl = (pagetable_t) kalloc();
+
   memset(kpgtbl, 0, PGSIZE);
 
   // uart registers
@@ -135,6 +136,13 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
+// add a mapping to the user page table.
+int
+uvmmap(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  return mappages(pagetable, va, size, pa, perm);
+}
+
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa.
 // va and size MUST be page-aligned.
@@ -223,7 +231,7 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
     panic("uvmfirst: more than a page");
   mem = kalloc();
   memset(mem, 0, PGSIZE);
-  mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
+  uvmmap(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
   memmove(mem, src, sz);
 }
 
@@ -246,7 +254,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       return 0;
     }
     memset(mem, 0, PGSIZE);
-    if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+    if(uvmmap(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -309,13 +317,13 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+extern int reference_counts[(PHYSTOP - KERNBASE) / PGSIZE];
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -324,18 +332,22 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    // 老页表 PTE RSW bits = original WR，设置为只读
+    uint rsw_bits = ((flags >> 1) & 0x3) << 8;
+    flags |= rsw_bits;
+    flags &= ~PTE_W;
+    *pte = PA2PTE(pa) | flags | PTE_V;
+    // 新页表 PTE RSW bits = original WR，设置为只读，一样
+    if(uvmmap(new, i, PGSIZE, (uint64)pa, flags) != 0){
       goto err;
     }
+    // 相应的引用 += 1
+    reference_counts[REFER_INDEX(pa)] += 1;
   }
   return 0;
 
  err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
+  uvmunmap(new, 0, i / PGSIZE, 0);
   return -1;
 }
 
@@ -360,12 +372,45 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
   pte_t *pte;
+  uint flags;
+  char *mem;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
+
+    // 单独处理可能是 COW page 的情况 --- start
+    flags = PTE_FLAGS(*pte);
+    // 如果 RSW 可写
+    if (flags & (1L << 9)) {
+      // flags 必须是 valid
+      if(!(flags & PTE_V))
+        panic("in copyout, flags must be valid");
+      // 分配内存页，拷贝内存页，设置 PTE 权限
+      if((mem = kalloc()) == 0)
+        return -1;
+      pa0 = PTE2PA(*pte);
+      memmove(mem, (char *)pa0, PGSIZE);
+      flags |= PTE_W;
+      flags &= ~(3L << 8);
+      *pte = PA2PTE(mem) | flags | PTE_V;
+      // 把 copyout 本来要拷贝的内容拷贝到 mem 上
+      n = PGSIZE - (dstva - va0);
+      if(n > len)
+        n = len;
+      memmove((void *)(mem + (dstva - va0)), src, n);
+      // 这个进程已经断掉了和原来的 pa0 的联系，为了防止内存泄漏，需要调用 kfree 释放
+      kfree((void *)pa0);
+      // 更新一些东西，然后继续下一轮循环
+      len -= n;
+      src += n;
+      dstva = va0 + PGSIZE;
+      continue;
+    }
+    // 单独处理可能是 COW page 的情况 --- end
+
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
        (*pte & PTE_W) == 0)
       return -1;

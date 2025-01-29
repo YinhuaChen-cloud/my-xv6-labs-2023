@@ -133,3 +133,17 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+void 
+backtrace() 
+{
+  uint64 fp = r_fp();
+  uint64 return_addr = 0x0;
+  uint64 page_top = PGROUNDUP(fp);
+
+  while(fp < page_top && fp != 0) {
+    return_addr = *(uint64 *)(fp - 0x8);
+    fp = *(uint64 *)(fp - 0x10);
+    printf("%p\n", return_addr);
+  }
+}
