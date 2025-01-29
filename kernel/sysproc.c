@@ -100,14 +100,15 @@ sys_sigalarm(void)
   int alarm_interval;
   uint64 alarm_handler;
 
-  struct proc* curproc = myproc();
+  struct proc* p = myproc();
 
   argint(0, &alarm_interval);
   argaddr(1, &alarm_handler);
 
-  curproc->alarm_interval = alarm_interval;
-  curproc->alarm_handler = alarm_handler;
-  curproc->ticks_left = alarm_interval;
+  p->alarm_interval = alarm_interval;
+  p->alarm_handler = alarm_handler;
+  p->ticks_left = alarm_interval;
+  p->in_handler = false;
 
   return 0;
 }
@@ -115,5 +116,12 @@ sys_sigalarm(void)
 uint64
 sys_sigreturn(void)
 {
-  return 0;
+  struct proc* p = myproc();
+
+  // unset flag
+  p->in_handler = false;
+  // restore registers
+  memmove(p->trapframe, p->handlerframe, sizeof(struct trapframe));
+
+  return p->trapframe->a0;
 }

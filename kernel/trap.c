@@ -78,16 +78,20 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2) {
-    if(p->alarm_interval > 0) {
+    if(p->alarm_interval > 0 && !p->in_handler) {
       p->ticks_left--;
       if(p->ticks_left < 0) {
-        printf("p->ticks_left cannot be less than 0\n");
-        while(1);
+        panic("p->ticks_left cannot be less than 0");
       }
       if(p->ticks_left == 0) {
+        // store registers
+        memmove(p->handlerframe, p->trapframe, sizeof(struct trapframe));
         // set return addr as sigalarm handler
         p->trapframe->epc = p->alarm_handler;
+        // reload
         p->ticks_left = p->alarm_interval;
+        // set flag
+        p->in_handler = true;
       }
     }
     yield();

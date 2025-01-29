@@ -1,3 +1,4 @@
+#include <stdbool.h>
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -109,5 +110,7 @@ struct proc {
   int alarm_interval; 
   uint64 alarm_handler;
   int ticks_left;
+  bool in_handler; // indicate whether user program is in handler
+  struct trapframe *handlerframe; // data page for user handler
 
 };

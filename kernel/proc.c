@@ -150,6 +150,12 @@ found:
   p->alarm_interval = 0;
   p->alarm_handler = 0;
   p->ticks_left = 0;
+  p->in_handler = false; 
+  if((p->handlerframe = (struct trapframe *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
 
   return p;
 }
@@ -163,6 +169,10 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  // for alarm handler
+  if(p->handlerframe)
+    kfree((void*)p->handlerframe);
+  p->handlerframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
