@@ -60,9 +60,18 @@ usertrap(void)
 
     va = r_stval();
 
-    if((pte = walk(p->pagetable, va, 0)) == 0) {
-      panic("usertrap-pagefault: pte should exist");
+    // 如果发生 store page fault 的内存地址超过 MAXVA，那么杀掉这个进程
+    if(va >= MAXVA) {
+      printf("illegal writing address\n");
+      setkilled(p);
+      goto end;
     }
+
+    if((pte = walk(p->pagetable, va, 0)) == 0) {
+      // 如果在页表中根据 va 搜索 pte 失败，那么 panic
+      panic("in usertrap-write-page-fault");
+    }
+    // 如果搜索 pte 成功，做一些复杂的事情 ...
     flags = PTE_FLAGS(*pte);
     pa = PTE2PA(*pte);
     
@@ -88,6 +97,7 @@ usertrap(void)
       // else, kill this process
       setkilled(p);
     }
+
   }
   else if(r_scause() == 8){
     // system call
@@ -111,6 +121,8 @@ usertrap(void)
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);
   }
+
+end:
 
   if(killed(p))
     exit(-1);

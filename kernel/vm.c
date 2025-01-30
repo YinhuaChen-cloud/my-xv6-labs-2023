@@ -86,16 +86,18 @@ kvminithart()
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
-  if(va >= MAXVA)
+  if(va >= MAXVA) {
     panic("walk");
+  }
 
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
-      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
+      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0) {
         return 0;
+      }
       memset(pagetable, 0, PGSIZE);
       *pte = PA2PTE(pagetable) | PTE_V;
     }
@@ -381,7 +383,11 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
       return -1;
     pte = walk(pagetable, va0, 0);
 
-    // 单独处理可能是 COW page 的情况 --- start
+    // 单独处理可能是 COW page 的情况 --------- start
+    // 需要正确处理出错情况
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
+       ((*pte & PTE_W) == 0 && (*pte & (1L << 9)) == 0))
+      return -1;
     flags = PTE_FLAGS(*pte);
     // 如果 RSW 可写
     if (flags & (1L << 9)) {
@@ -409,7 +415,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
       dstva = va0 + PGSIZE;
       continue;
     }
-    // 单独处理可能是 COW page 的情况 --- end
+    // 单独处理可能是 COW page 的情况 --------- end
 
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
        (*pte & PTE_W) == 0)
