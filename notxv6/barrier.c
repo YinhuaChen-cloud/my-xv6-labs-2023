@@ -30,7 +30,26 @@ barrier()
   // Block until all threads have called barrier() and
   // then increment bstate.round.
   //
-  
+
+  pthread_mutex_lock(&bstate.barrier_mutex); // 获取锁 
+
+  bstate.nthread++; // 已经到达 barrier 的线程数目要增加
+
+  // 由到达 barrier 的最后一个线程唤醒所有其它线程，并且最后一个线程不用睡眠
+  assert(nthread >= bstate.nthread);
+  if(nthread == bstate.nthread) {
+    // wake up every thread sleeping on cond
+    pthread_cond_broadcast(&bstate.barrier_cond);     
+    bstate.round++; 
+    bstate.nthread = 0;  // reset to 0
+  }
+  else {
+    // go to sleep, release lock mutex, acquiring upon wake up
+    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+  }
+
+  pthread_mutex_unlock(&bstate.barrier_mutex); // 释放锁
+
 }
 
 static void *
