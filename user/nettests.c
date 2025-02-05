@@ -260,19 +260,23 @@ int
 main(int argc, char *argv[])
 {
   int i, ret;
+  // 这个端口号使用 -DNET_TESTS_PORT 在编译阶段定义
   uint16 dport = NET_TESTS_PORT;
 
   printf("nettests running on port %d\n", dport);
   
+  // 测试 ping 命令是否能运行正常
   printf("testing ping: ");
   ping(2000, dport, 1);
   printf("OK\n");
   
+  // 测试单进程 100 次 ping 
   printf("testing single-process pings: ");
   for (i = 0; i < 100; i++)
     ping(2000, dport, 1);
   printf("OK\n");
   
+  // 申请 10 个 子进程一起 ping
   printf("testing multi-process pings: ");
   for (i = 0; i < 10; i++){
     int pid = fork();
@@ -288,10 +292,12 @@ main(int argc, char *argv[])
   }
   printf("OK\n");
   
+  // 测试 DNS
   printf("testing DNS\n");
   dns();
   printf("DNS OK\n");
   
+  // 上述都没问题，则所有测试通过 
   printf("all tests passed.\n");
   exit(0);
 }
