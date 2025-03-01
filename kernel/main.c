@@ -32,8 +32,8 @@ main()
     fileinit();      // file table
     virtio_disk_init(); // emulated hard disk
 #ifdef LAB_NET
-    pci_init();
-    sockinit();
+    pci_init(); // 初始化中断和外围部件接口
+    sockinit(); // 源码看进去只是初始化了 socktbl 的锁
 #endif    
     userinit();      // first user process
 #ifdef KCSAN
