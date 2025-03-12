@@ -40,6 +40,7 @@ binit(void)
 
   initlock(&bcache.lock, "bcache");
 
+  // 这是一个环状链表, head.next 最新，head.prev 最老
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;
   bcache.head.next = &bcache.head;

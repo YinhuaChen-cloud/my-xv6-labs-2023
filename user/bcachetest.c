@@ -91,12 +91,15 @@ test0()
   enum { N = 10, NCHILD = 3 };
   int m, n;
 
+  // dir = 0\0; file = F\0;
   dir[0] = '0';
   dir[1] = '\0';
   file[0] = 'F';
   file[1] = '\0';
 
   printf("start test0\n");
+  // 创建文件夹 0, 1, 2，再进入这些文件，创建文件 F，随后回到之前的目录
+  // F 文件大小为 N * BSIZE = 10 * 1024
   for(int i = 0; i < NCHILD; i++){
     dir[0] = '0' + i;
     mkdir(dir);
@@ -111,7 +114,9 @@ test0()
       exit(1);
     }
   }
-  m = ntas(0);
+  // m = 当前 kmem 和 bcache 尝试获取锁但不成功的次数总数
+  m = ntas(1);
+  // 创建三个子进程，分别进入目录 0, 1, 2，并且读取文件 F
   for(int i = 0; i < NCHILD; i++){
     dir[0] = '0' + i;
     int pid = fork();
@@ -131,11 +136,14 @@ test0()
     }
   }
 
+  // 等待子进程结束
   for(int i = 0; i < NCHILD; i++){
     wait(0);
   }
   printf("test0 results:\n");
+  // n = 当前 kmem 和 bcache 尝试获取锁但不成功的次数总数
   n = ntas(1);
+  // 如果获取锁失败次数小于 500 次，则通过 test0
   if (n-m < 500)
     printf("test0: OK\n");
   else
