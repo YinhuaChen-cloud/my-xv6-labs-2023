@@ -190,7 +190,7 @@ brelse(struct buf *b)
 
 void
 bpin(struct buf *b) {
-  printf("in bpin\n");
+  printf("in bpin, b->blockno = %d\n", b->blockno);
   // 计算哈希索引
   uint hash_idx = b->blockno % NBUCKETS;
   acquire(&bcache_buckets[hash_idx].lock);
@@ -200,7 +200,7 @@ bpin(struct buf *b) {
 
 void
 bunpin(struct buf *b) {
-  printf("in bunpin\n");
+  printf("in bunpin, b->blockno = %d\n", b->blockno);
   // 计算哈希索引
   uint hash_idx = b->blockno % NBUCKETS;
   acquire(&bcache_buckets[hash_idx].lock);
