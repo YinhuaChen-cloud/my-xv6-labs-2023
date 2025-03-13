@@ -78,56 +78,58 @@ bget(uint dev, uint blockno)
 {
   struct buf *b;
 
-  // 打印每个桶的 buffer 数量，以及数组中空闲的 buffer 数量
-  int free_count = 0;
-  for(int i = 0; i < NBUF; i++) {
-    if(bcache.buf[i].refcnt == 0) {
-      free_count++;
-    }
-  }
+  acquire(&bcache.lock);
 
-  // 先在哈希表对应的桶里看能否找到所需的 buffer
+  // 获取对应哈希桶的锁
   uint hash_idx = blockno % NBUCKETS;
-
-  printf("in bget, blockno = %d, hash_idx = %d, free_count = %d\n", blockno, hash_idx, free_count);
-
   acquire(&bcache_buckets[hash_idx].lock);
-  // 如果在桶里能找到对应的 buffer，则在得到这个 buffer 的锁后返回这个 buffer
   for(b = bcache_buckets[hash_idx].head.next; b != &bcache_buckets[hash_idx].head; b = b->next){
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
       release(&bcache_buckets[hash_idx].lock);
+      release(&bcache.lock);
       acquiresleep(&b->lock);
       return b;
     }
   }
+  release(&bcache_buckets[hash_idx].lock);
 
-  printf("in bget, blockno = %d, hash_idx = %d, is not in bucket\n", blockno, hash_idx);
-
-  // 这里不能释放锁，为了对应 
-  // "3. Searching in the hash table for a buffer and allocating an entry for that buffer when the 
-  // buffer is not found must be atomic. "
-  // 实际上是为了避免在 brelse 执行过程中，refcnt 被修改
-
-  // 若在哈希桶中找不到 buffer，则在 buffer 数组中寻找一个 refcnt == 0 的 buffer，获取它的锁，并返回这个 buffer 
-  // (brelse 再把 buffer 给对应的桶)
-  // 直接在全局数组里找 buffer，有可能会把其它 bucket 里的空闲 buffer 在 brelse 阶段放到我们的 bucket 里
-  // 先获取 bcache 的锁，避免 refcnt 读写竞争冲突
-  acquire(&bcache.lock);
+  // 为了避免和上面的代码产生 refcnt 冲突，每个 buffer 在判断 b->refcnt 之前要获取这个 b 对应的桶的锁
+  uint original_hash_idx;
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
     if(b->refcnt == 0) {
       b->dev = dev;
+      original_hash_idx = b->blockno % NBUCKETS;
       b->blockno = blockno;
       b->valid = 0;
       b->refcnt = 1;
-      printf("in bget, blockno = %d, hash_idx = %d, b->refcnt = %d\n", blockno, hash_idx, b->refcnt);
-      release(&bcache.lock);
-      release(&bcache_buckets[hash_idx].lock);
-      acquiresleep(&b->lock);
-      return b;
+      break;
     }
   }
 
+  // 执行到这里，若 b < bcache.buf+NBUF，说明没找到所需的 buffer，否则说明没找到
+  if (b < bcache.buf+NBUF) {
+    // 首先要把该 buffer 从原来的链表上脱离
+    if(original_hash_idx != hash_idx) {
+      acquire(&bcache_buckets[original_hash_idx].lock);
+    }
+    acquire(&bcache_buckets[hash_idx].lock);
+    b->next->prev = b->prev;
+    b->prev->next = b->next;
+    // 随后把该 buffer 放进 hash_idx 的桶里，方便被访问相同块的进程使用缓存
+    b->next = bcache_buckets[hash_idx].head.next;
+    b->prev = &bcache_buckets[hash_idx].head;
+    bcache_buckets[hash_idx].head.next->prev = b;
+    bcache_buckets[hash_idx].head.next = b;
+    // 释放 桶 的锁，返回这个 buffer
+    if(original_hash_idx != hash_idx)
+      release(&bcache_buckets[original_hash_idx].lock);
+    release(&bcache_buckets[hash_idx].lock);
+    acquiresleep(&b->lock);
+    release(&bcache.lock);
+    return b;
+  }
+  
   panic("bget: no buffers");
 }
 
@@ -164,34 +166,17 @@ brelse(struct buf *b)
 
   releasesleep(&b->lock);
 
-  // 计算哈希索引
+  // 只加对应哈希桶的锁
   uint hash_idx = b->blockno % NBUCKETS;
-
-  printf("in brelse, b->blockno = %d, hash_idx = %d\n", b->blockno, hash_idx);
-
-  // 获取对应桶的锁，随后把 buffer 放入对应桶中
   acquire(&bcache_buckets[hash_idx].lock);
   b->refcnt--;
-  printf("after b->refcnt--, b->refcnt = %d\n", b->refcnt);
-  // 若索引归零，放进对应桶的链表里
-  if (b->refcnt == 0) {
-    // 先把 buffer 从原来的链表中取出
-    b->next->prev = b->prev;
-    b->prev->next = b->next;
-    // 随后把 buffer 放到对应桶的链表头
-    b->next = bcache_buckets[hash_idx].head.next;
-    b->prev = &bcache_buckets[hash_idx].head;
-    bcache_buckets[hash_idx].head.next->prev = b;
-    bcache_buckets[hash_idx].head.next = b;
-  }
-  
+  // 这里不需要做链表操作，把该 buffer 留在它所在的桶里就行
   release(&bcache_buckets[hash_idx].lock);
 }
 
 void
 bpin(struct buf *b) {
-  printf("in bpin, b->blockno = %d\n", b->blockno);
-  // 计算哈希索引
+  // 只加对应哈希桶的锁
   uint hash_idx = b->blockno % NBUCKETS;
   acquire(&bcache_buckets[hash_idx].lock);
   b->refcnt++;
@@ -200,8 +185,7 @@ bpin(struct buf *b) {
 
 void
 bunpin(struct buf *b) {
-  printf("in bunpin, b->blockno = %d\n", b->blockno);
-  // 计算哈希索引
+  // 只加对应哈希桶的锁
   uint hash_idx = b->blockno % NBUCKETS;
   acquire(&bcache_buckets[hash_idx].lock);
   b->refcnt--;
