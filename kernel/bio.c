@@ -122,18 +122,18 @@ bget(uint dev, uint blockno)
     bcache_buckets[hash_idx].head.next = b;
 
 
-    // 打印每个桶的链条
-    printf("=================== start ================\n");
-    for(int i = 0; i < NBUCKETS; i++) {
-      struct buf *tmp;
-      for(tmp = bcache_buckets[i].head.next; tmp != &bcache_buckets[i].head; tmp = tmp->next) {
-        printf("bucket %d, tmp->blockno = %d, tmp->dev = %d\n", i, tmp->blockno, tmp->dev);
-        if(tmp->blockno % NBUCKETS != i) {
-          panic("hahaha");
-        }
-      }
-    }
-    printf("=================== end ================\n");
+    // // 打印每个桶的链条
+    // // printf("=================== start ================\n");
+    // for(int i = 0; i < NBUCKETS; i++) {
+    //   struct buf *tmp;
+    //   for(tmp = bcache_buckets[i].head.next; tmp != &bcache_buckets[i].head; tmp = tmp->next) {
+    //     printf("bucket %d, tmp->blockno = %d, tmp->dev = %d\n", i, tmp->blockno, tmp->dev);
+    //     if(tmp->blockno % NBUCKETS != i) {
+    //       panic("hahaha");
+    //     }
+    //   }
+    // }
+    // printf("=================== end ================\n");
 
     // 释放 桶 的锁，返回这个 buffer
     if(original_hash_idx != hash_idx) {
