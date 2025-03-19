@@ -253,6 +253,7 @@ test2()
           // the sleep() increases the chance of simultaneous
           // calls to bget().
           sleep(1);
+          // printf("file = %s, xx = %d\n", file, xx);
           if(write(fd, &xx, sizeof(xx)) <= 0){
             printf("test2: write %s failed\n", file);
             exit(1);
@@ -278,11 +279,13 @@ test2()
           sleep(1);
           int n = read(fd, &z, sizeof(z));
           if(n != sizeof(z)){
-            printf("test2: read %s returned %d, expected %d\n", file, n, sizeof(z));
+            returnprintf(file, n, sizeof(z));
+            // printf("test2: read %s returned %d, expected %d\n", file, n, sizeof(z));
             exit(1);
           }
           if(z != xx){
-            printf("test2: file %s contained %d, not %d\n", file, z, xx);
+            containprintf(file, z, xx);
+            // printf("test2: file %s contained %d, not %d\n", file, z, xx);
             exit(1);
           }
         }

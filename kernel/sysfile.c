@@ -248,11 +248,14 @@ create(char *path, short type, short major, short minor)
   struct inode *ip, *dp;
   char name[DIRSIZ];
 
+  // 根据路径名搜寻要创建的文件所在的目录的 inode
   if((dp = nameiparent(path, name)) == 0)
     return 0;
 
+  // 锁住目录的 inode
   ilock(dp);
 
+  // 在目录中寻找 符合文件名的 inode，若有，直接返回这个 Inode
   if((ip = dirlookup(dp, name, 0)) != 0){
     iunlockput(dp);
     ilock(ip);
@@ -262,6 +265,7 @@ create(char *path, short type, short major, short minor)
     return 0;
   }
 
+  // 若没有，则分配 inode
   if((ip = ialloc(dp->dev, type)) == 0){
     iunlockput(dp);
     return 0;
@@ -290,6 +294,7 @@ create(char *path, short type, short major, short minor)
 
   iunlockput(dp);
 
+  // 最终返回 inode
   return ip;
 
  fail:
@@ -503,3 +508,37 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 
+sys_returnprintf(void)
+{
+  char file[16];
+  int n;
+  int sizeofz;
+  if(argstr(0, file, 16) < 0) 
+    return -1;
+  argint(1, &n);
+  argint(2, &sizeofz);
+
+  printf("test2: read %s returned %d, expected %d\n", file, n, sizeofz);
+
+  return 0;
+}
+
+uint64 
+sys_containprintf(void)
+{
+  char file[16];
+  int z;
+  int xx;
+  if(argstr(0, file, 16) < 0) 
+    return -1;
+  argint(1, &z);
+  argint(2, &xx);
+
+  printf("test2: file %s contained %d, not %d\n", file, z, xx);
+
+  return 0;
+}
+
+

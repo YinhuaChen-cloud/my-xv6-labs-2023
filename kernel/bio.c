@@ -91,8 +91,25 @@ bget(uint dev, uint blockno)
   }
   release(&bcache_buckets[hash_idx].lock);
 
-  // 为了避免和上面的代码 refcnt 竞争，每个 buffer 在判断 b->refcnt 之前要获取这个 b 对应的桶的锁
+  // 这里需要再搜索一遍，否则可能会造成同一个 blockno 有多个 buf 副本
+  // 原因: 三个线程都先搜索了一遍链表，都发现没有所需的 buffer，于是都决定找一个 refcnt == 0 的 buffer 分配
+  // 导致出现三个相同 blockno 的 buffer
+  // 所以，再修改之前还需要再 check 一遍
+  // check 和修改必须原子化，这算是并行的一个原则
   acquire(&bcache.lock);
+  // 再检查一遍
+  acquire(&bcache_buckets[hash_idx].lock);
+  for(b = bcache_buckets[hash_idx].head.next; b != &bcache_buckets[hash_idx].head; b = b->next){
+    if(b->dev == dev && b->blockno == blockno){
+      b->refcnt++;
+      release(&bcache_buckets[hash_idx].lock);
+      release(&bcache.lock);
+      acquiresleep(&b->lock);
+      return b;
+    }
+  }
+  release(&bcache_buckets[hash_idx].lock);
+
   uint original_hash_idx;
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
     original_hash_idx = b->blockno % NBUCKETS;
@@ -109,10 +126,10 @@ bget(uint dev, uint blockno)
 
   // 执行到这里，若 b < bcache.buf+NBUF，说明找到了所需的 buffer;否则说明没找到
   if (b < bcache.buf+NBUF) {
-    // 首先要把该 buffer 从原来的链表上脱离
     if(original_hash_idx != hash_idx) {
       acquire(&bcache_buckets[hash_idx].lock);
     }
+    // 首先要把该 buffer 从原来的链表上脱离
     b->next->prev = b->prev;
     b->prev->next = b->next;
     // 随后把该 buffer 放进 hash_idx 的桶里，方便被访问相同块的进程使用缓存
@@ -120,29 +137,13 @@ bget(uint dev, uint blockno)
     b->prev = &bcache_buckets[hash_idx].head;
     bcache_buckets[hash_idx].head.next->prev = b;
     bcache_buckets[hash_idx].head.next = b;
-
-
-    // // 打印每个桶的链条
-    // // printf("=================== start ================\n");
-    // for(int i = 0; i < NBUCKETS; i++) {
-    //   struct buf *tmp;
-    //   for(tmp = bcache_buckets[i].head.next; tmp != &bcache_buckets[i].head; tmp = tmp->next) {
-    //     printf("bucket %d, tmp->blockno = %d, tmp->dev = %d\n", i, tmp->blockno, tmp->dev);
-    //     if(tmp->blockno % NBUCKETS != i) {
-    //       panic("hahaha");
-    //     }
-    //   }
-    // }
-    // printf("=================== end ================\n");
-
-    // 释放 桶 的锁，返回这个 buffer
+    // 释放所有锁，返回这个 buffer
     if(original_hash_idx != hash_idx) {
       release(&bcache_buckets[hash_idx].lock);
     }
     release(&bcache_buckets[original_hash_idx].lock);
     release(&bcache.lock);
     acquiresleep(&b->lock);
-
     return b;
   }
   
@@ -156,6 +157,7 @@ bread(uint dev, uint blockno)
   struct buf *b;
 
   b = bget(dev, blockno);
+
   if(!b->valid) {
     virtio_disk_rw(b, 0);
     b->valid = 1;
@@ -182,32 +184,26 @@ brelse(struct buf *b)
 
   releasesleep(&b->lock);
 
-  acquire(&bcache.lock);
   uint hash_idx = b->blockno % NBUCKETS;
   acquire(&bcache_buckets[hash_idx].lock);
   b->refcnt--;
   release(&bcache_buckets[hash_idx].lock);
-  release(&bcache.lock);
 }
 
 void
 bpin(struct buf *b) {
-  acquire(&bcache.lock);
   uint hash_idx = b->blockno % NBUCKETS;
   acquire(&bcache_buckets[hash_idx].lock);
   b->refcnt++;
   release(&bcache_buckets[hash_idx].lock);
-  release(&bcache.lock);
 }
 
 void
 bunpin(struct buf *b) {
-  acquire(&bcache.lock);
   uint hash_idx = b->blockno % NBUCKETS;
   acquire(&bcache_buckets[hash_idx].lock);
   b->refcnt--;
   release(&bcache_buckets[hash_idx].lock);
-  release(&bcache.lock);
 }
 
 

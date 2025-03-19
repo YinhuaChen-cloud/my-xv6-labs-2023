@@ -26,6 +26,10 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+
+int returnprintf(char *, int, int);
+int containprintf(char *, int, int);
+
 #ifdef LAB_NET
 int connect(uint32, uint16, uint16);
 #endif
