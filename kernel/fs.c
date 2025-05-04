@@ -385,6 +385,7 @@ bmap(struct inode *ip, uint bn)
   uint addr, *a;
   struct buf *bp;
 
+  // 先分配直接块
   if(bn < NDIRECT){
     if((addr = ip->addrs[bn]) == 0){
       addr = balloc(ip->dev);
@@ -394,8 +395,10 @@ bmap(struct inode *ip, uint bn)
     }
     return addr;
   }
+  // 做个偏移
   bn -= NDIRECT;
 
+  // 再分配一级间接块
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
     if((addr = ip->addrs[NDIRECT]) == 0){
@@ -406,6 +409,7 @@ bmap(struct inode *ip, uint bn)
     }
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
+    // 如果 a[bn] 代表的 data 块号还没被分配，那么分配它
     if((addr = a[bn]) == 0){
       addr = balloc(ip->dev);
       if(addr){
@@ -413,6 +417,49 @@ bmap(struct inode *ip, uint bn)
         log_write(bp);
       }
     }
+    brelse(bp);
+    return addr;
+  }
+  // 做个偏移
+  bn -= NINDIRECT;
+
+  // 再分配二级间接块
+  if(bn < TWO_NINDIRECT){
+    // Load two_indirect block, allocating if necessary.
+    if((addr = ip->addrs[NDIRECT+1]) == 0){
+      addr = balloc(ip->dev);
+      if(addr == 0)
+        return 0;
+      ip->addrs[NDIRECT+1] = addr;
+    }
+    // 读取刚刚分配的 TWO_INDIRECT 块的 buffer
+    bp = bread(ip->dev, addr);
+    // a = TWO_INDIRECT 块的 buffer 的数据区
+    a = (uint*)bp->data;
+    // 计算 bn 在 TWO_INDIRECT 中对应的块号，是 bn / 256 (bn >> 8) 
+    // 如果 bn >> 8 代表的 INDIRECT 块还没被分配，那么分配它
+    if((addr = a[bn >> 8]) == 0){
+      addr = balloc(ip->dev);
+      if(addr == 0)
+        return 0;
+      // 分配 bn >> 8 对应的 INDIRECT 块，由于修改了缓存 bp，这里需要调用 log_write
+      a[bn >> 8] = addr;
+      log_write(bp);
+    }
+    // 总是要释放 TWO_INDIRECT 块的 buffer
+    brelse(bp);
+    // 分配完 bn >> 8 代表的 INDIRECT 块后，读取对应的 INDIRECT buffer
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    // 如果 a[bn & 0xff] 代表的 data 块号还没被分配，那么分配它
+    if((addr = a[bn & 0xff]) == 0){
+      addr = balloc(ip->dev);
+      if(addr){
+        a[bn & 0xff] = addr;
+        log_write(bp);
+      }
+    }
+    // 总是要释放 INDIRECT 块的 buffer
     brelse(bp);
     return addr;
   }
@@ -428,6 +475,9 @@ itrunc(struct inode *ip)
   int i, j;
   struct buf *bp;
   uint *a;
+
+  struct buf *tmpbp;
+  uint *tmpa;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -446,6 +496,35 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+  
+  // 如果使用了 TWO_INDIRECT
+  if(ip->addrs[NDIRECT+1]){
+    // 先读取 buffer
+    bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
+    a = (uint*)bp->data;
+    for(i = 0; i < NINDIRECT; i++){
+      // 如果 i 块不空闲，那么再深度遍历一层
+      if(a[i]) {
+        // 读取 i 块 buffer
+        tmpbp = bread(ip->dev, a[i]);
+        tmpa = (uint*)tmpbp->data;
+        for(j = 0; j < NINDIRECT; j++){
+          if(tmpa[j])
+            bfree(ip->dev, tmpa[j]);
+        }
+        // 释放 buffer
+        brelse(tmpbp);
+        // 释放磁盘块
+        bfree(ip->dev, a[i]);
+        a[i] = 0;
+      }
+    }
+    // 释放 buffer
+    brelse(bp);
+    // 最后释放这个块
+    bfree(ip->dev, ip->addrs[NDIRECT+1]);
+    ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
