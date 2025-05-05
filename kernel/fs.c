@@ -202,9 +202,11 @@ ialloc(uint dev, short type)
   struct buf *bp;
   struct dinode *dip;
 
+  // inum 范围 1 ~ sb.ninodes, sb.ninodes 是超级块记录的 inode 数量
   for(inum = 1; inum < sb.ninodes; inum++){
     bp = bread(dev, IBLOCK(inum, sb));
     dip = (struct dinode*)bp->data + inum%IPB;
+    // 找到空闲的 dinode 后，设置 type，然后释放，再调用 iget 获取 inode 结构体
     if(dip->type == 0){  // a free inode
       memset(dip, 0, sizeof(*dip));
       dip->type = type;
@@ -251,6 +253,8 @@ iget(uint dev, uint inum)
   acquire(&itable.lock);
 
   // Is the inode already in the table?
+  // 遍历整个 itable(inode cache)，若找到 dev 和 inum 一致的 inode，直接返回这个 inode
+  // 若没找到, empty 记录了一个空闲的 inode cache
   empty = 0;
   for(ip = &itable.inode[0]; ip < &itable.inode[NINODE]; ip++){
     if(ip->ref > 0 && ip->dev == dev && ip->inum == inum){
@@ -262,10 +266,11 @@ iget(uint dev, uint inum)
       empty = ip;
   }
 
-  // Recycle an inode entry.
+  // Recycle an inode entry. (执行到这里说明 inode 不足)
   if(empty == 0)
     panic("iget: no inodes");
 
+  // 该 inode 的 addrs 还没有被写入，无效
   ip = empty;
   ip->dev = dev;
   ip->inum = inum;
@@ -298,8 +303,10 @@ ilock(struct inode *ip)
   if(ip == 0 || ip->ref < 1)
     panic("ilock");
 
+  // 加睡眠锁
   acquiresleep(&ip->lock);
 
+  // 若 valid == False, 那么根据 inum 从磁盘读取 dinode，覆盖数据给 inum
   if(ip->valid == 0){
     bp = bread(ip->dev, IBLOCK(ip->inum, sb));
     dip = (struct dinode*)bp->data + ip->inum%IPB;
@@ -581,6 +588,7 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
 // Returns the number of bytes successfully written.
 // If the return value is less than the requested n,
 // there was an error of some kind.
+// off: 表示要在 inode 代表的文件的哪个地方开始写入数据
 int
 writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
 {

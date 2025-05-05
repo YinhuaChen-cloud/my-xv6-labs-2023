@@ -301,6 +301,12 @@ create(char *path, short type, short major, short minor)
   return 0;
 }
 
+// - 修改open系统调用，以处理路径指向符号链接的情况。如果文件不存在，open必须失败。
+// 当进程在传递给open的标志中指定O_NOFOLLOW时，open应该打开symlink（并且不跟随符
+// 号链接）。 -------- 若文件不存在的 case 不需要处理，open默认行为就足够
+// - 如果链接的文件也是一个符号链接，你必须递归地跟随它，直到达到一个非链接文件。如果
+// 链接形成一个循环，你必须返回一个错误代码。你可以通过在链接的深度达到某个阈值（例如10）
+// 时返回错误代码来近似这一点。
 uint64
 sys_open(void)
 {
@@ -310,6 +316,9 @@ sys_open(void)
   struct inode *ip;
   int n;
 
+  // 为符号链接准备
+  char symlink_target[MAXPATH];
+
   argint(1, &omode);
   if((n = argstr(0, path, MAXPATH)) < 0)
     return -1;
@@ -317,6 +326,7 @@ sys_open(void)
   begin_op();
 
   if(omode & O_CREATE){
+    // 若对软连接使用 O_CRAETE，create 默认行为会返回 0
     ip = create(path, T_FILE, 0, 0);
     if(ip == 0){
       end_op();
@@ -327,7 +337,50 @@ sys_open(void)
       end_op();
       return -1;
     }
+
+    // 使用 inode 的数据之前得加锁
     ilock(ip);
+
+    // 默认情况下递归跟随软链接，直到没遇到软链接或达到阈值返回错误代码为止
+    int slink_depth = 0;
+    struct inode *tmpip;
+    while(ip->type == T_SYMLINK) {
+      if(omode & O_NOFOLLOW){
+        // 如果指定 O_NOFOLLOW
+        // open应该打开symlink（并且不跟随符号链接）
+        // 解决方案：什么都不干，直接 break 然后 falldown 就行
+        break;
+      }
+
+      // 没有指定 O_NOFOLLOW
+      // 先调用 readi 读取文件里的字符串，存于 symlink_target
+      if(readi(ip, 0, (uint64)symlink_target, 0, MAXPATH) <= 0) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      // 随后使用读出的路径获取 inode
+      if((tmpip = namei(symlink_target)) == 0){
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      // 运行到这里，说明成功通过软链接得到了路径，并获得了 inode
+      // 替换 ip 为新的 inode
+      iunlockput(ip);
+      ip = tmpip;
+      ilock(ip);
+
+      // 若超过阈值，返回错误代码
+      slink_depth++;
+      if(slink_depth >= 10) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+    }
+
+    // ilock(ip); 这里的注释掉，前面已经加过锁了
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -503,3 +556,52 @@ sys_pipe(void)
   }
   return 0;
 }
+
+// 实现symlink(target, path)系统调用，以在path处创建一个新的指向target的符号链接。
+// 请注意，target不需要存在，系统调用就可以成功。你需要选择一个地方来存储符号链接的
+// 目标路径，例如，在inode的数据块中。symlink应该返回一个整数，表示成功（0）或失败（-1），
+// 类似于link和unlink。
+
+// 软链接是一个独立的文件，拥有自己的 inode 和 数据块（数据块中存储的是 目标文件的路径
+// 字符串，例如 /home/user/file）。
+
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH], linkpath[MAXPATH];
+  struct inode *ip;
+  int target_len;
+
+  if((target_len = argstr(0, target, MAXPATH)) < 0 || argstr(1, linkpath, MAXPATH) < 0)
+    return -1;
+
+  // 每个 FS system call 都要调用
+  begin_op();
+
+  // 1. 创建 linkpath 文件 (若已存在， 返回 -1， 我们不覆盖)
+  // create 返回的 ip 已加了锁，所以后面不用加锁
+  ip = create(linkpath, T_SYMLINK, 0, 0);
+  if(ip == 0){
+    goto bad;
+  }
+  // 运行到这里，说明 linkpath 原本不存在，但我们现在创建了
+  if(ip->type != T_SYMLINK)
+    panic("sys_symlink: type not symlink");
+  // 2. 储存 target 路径到 inode 数据块(或者说 inode 代表的文件)
+  if(target_len != writei(ip, 0, (uint64)target, 0, target_len)) {
+    // 解锁，同时减引用
+    iunlockput(ip);
+    goto bad;
+  }
+
+  // 不需要 iupdate，因为我们只是往 inode 指向的数据块写入了数据，没有
+  // 修改 inode 本身。退一万步说，writei 本身已经调用了 iupdate
+  iunlockput(ip);
+  end_op();
+  return 0;
+
+bad:
+  end_op();
+  return -1;
+}
+
