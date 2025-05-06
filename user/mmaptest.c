@@ -36,6 +36,7 @@ err(char *why)
 void
 _v1(char *p)
 {
+  // 循环遍历两个页的所有字节，1.5个页为 A，0.5 个页为 0
   int i;
   for (i = 0; i < PGSIZE*2; i++) {
     if (i < PGSIZE + (PGSIZE/2)) {
@@ -60,18 +61,23 @@ void
 makefile(const char *f)
 {
   int i;
+  // n = 一个内存页能映射的块数
   int n = PGSIZE/BSIZE;
 
+  // 删除文件 f
   unlink(f);
+  // 创建文件 f
   int fd = open(f, O_WRONLY | O_CREATE);
   if (fd == -1)
     err("open");
+  // 设置内存 buf 为全 A
   memset(buf, 'A', BSIZE);
-  // write 1.5 page
+  // write 1.5 page，即文件 f 拥有 1.5 个内存页的 A
   for (i = 0; i < n + n/2; i++) {
     if (write(fd, buf, BSIZE) != BSIZE)
       err("write 0 makefile");
   }
+  // 关闭文件
   if (close(fd) == -1)
     err("close");
 }
@@ -90,6 +96,7 @@ mmap_test(void)
   // the mapped memory has the same bytes as originally written to the
   // file.
   //
+  // 创建文件 f，内含 1.5 个内存页的 A 和 0.5 个内存页的 0
   makefile(f);
   if ((fd = open(f, O_RDONLY)) == -1)
     err("open (1)");
@@ -110,10 +117,36 @@ mmap_test(void)
   // of the file to be mapped. the last argument is the starting
   // offset in the file.
   //
+  // void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+  // addr: 建议的映射起始地址，通常设为 NULL 让内核自动选择
+  // length: 要映射的区域长度
+  // prot: 内存保护标志，可以是以下值的组合：
+  //   PROT_READ: 可读
+  //   PROT_WRITE: 可写
+  //   PROT_EXEC: 可执行
+  //   PROT_NONE: 不可访问
+  // flags: 映射类型和选项，常用值：
+  //   MAP_SHARED: 共享映射，修改会写回文件
+  //   MAP_PRIVATE: 私有映射，修改不会影响原文件(会读取文件上的内容，但不会修改原文件，也不会同步其它进程的更新)
+  //   MAP_ANONYMOUS: 匿名映射，不与文件关联
+  //   MAP_FIXED: 强制使用指定的地址
+  // fd: 文件描述符，匿名映射时设为 -1
+  // offset: 文件偏移量，通常为 0
+  // 返回值:
+  //   成功时返回映射区域的起始地址，失败返回 MAP_FAILED ((void *)-1)
+  // 映射的进程内存起始地址由内核选择，映射长度为两个页，内存只读，私有映射，映射文件 f，偏移量为0
   char *p = mmap(0, PGSIZE*2, PROT_READ, MAP_PRIVATE, fd, 0);
   if (p == MAP_FAILED)
     err("mmap (1)");
+  // 验证映射内存是否为 1.5 页A 和 0.5 页 0
   _v1(p);
+  // int munmap(void *addr, size_t length); 
+  // 用于解除内存映射
+  // addr: 映射区域的起始地址
+  // length: 要解除映射的区域长度
+  // 返回值
+  //   成功返回 0，失败返回 -1
+  // 解除刚才的映射
   if (munmap(p, PGSIZE*2) == -1)
     err("munmap (1)");
 
@@ -122,12 +155,15 @@ mmap_test(void)
   printf("test mmap private\n");
   // should be able to map file opened read-only with private writable
   // mapping
+  // 一样的映射，只是映射的内存的操作权限变成可读可写 (一个只读打开的文件应该能使用 mmap PRIVATE 创建可写的内存)
   p = mmap(0, PGSIZE*2, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
   if (p == MAP_FAILED)
     err("mmap (2)");
   if (close(fd) == -1)
     err("close (1)");
+  // 验证映射内容是否正确
   _v1(p);
+  // 对映射内存修改
   for (i = 0; i < PGSIZE*2; i++)
     p[i] = 'Z';
   if (munmap(p, PGSIZE*2) == -1)
@@ -137,6 +173,7 @@ mmap_test(void)
 
   printf("test mmap read-only\n");
 
+  // 如果是只读打开这个文件，那么 mmap 不允许 PROT_WRITE 和 MAP_SHARED 同时存在
   // check that mmap doesn't allow read/write mapping of a
   // file opened read-only.
   if ((fd = open(f, O_RDONLY)) == -1)
@@ -151,6 +188,8 @@ mmap_test(void)
 
   printf("test mmap read/write\n");
 
+  // 检测：如果文件是可读可写打开的，那么就可以让 mmap 能读写它
+  // 注意：这里 mmap 映射了三页
   // check that mmap does allow read/write mapping of a
   // file opened read/write.
   if ((fd = open(f, O_RDWR)) == -1)
@@ -176,6 +215,7 @@ mmap_test(void)
 
   printf("test mmap dirty\n");
 
+  // 检查上一次测试的写入是否生效
   // check that the writes to the mapped memory were
   // written to the file.
   if ((fd = open(f, O_RDWR)) == -1)
@@ -195,6 +235,7 @@ mmap_test(void)
   printf("test not-mapped unmap\n");
 
   // unmap the rest of the mapped memory.
+  // 检测是否能分多次 unmap 去解除一次 mmap 的映射
   if (munmap(p+PGSIZE*2, PGSIZE) == -1)
     err("munmap (4)");
 
@@ -202,6 +243,7 @@ mmap_test(void)
 
   printf("test mmap two files\n");
 
+  // 检测是否能同时映射两个文件
   //
   // mmap two files at the same time.
   //
@@ -262,6 +304,7 @@ fork_test(void)
   printf("fork_test starting\n");
   testname = "fork_test";
 
+  // 创建文件 f，映射文件两次 p1 p2
   // mmap the file twice.
   makefile(f);
   if ((fd = open(f, O_RDONLY)) == -1)
@@ -279,6 +322,7 @@ fork_test(void)
   if(*(p1+PGSIZE) != 'A')
     err("fork mismatch (1)");
 
+  // 子进程取消掉 p1 的映射
   if((pid = fork()) < 0)
     err("fork");
   if (pid == 0) {
@@ -288,6 +332,7 @@ fork_test(void)
     exit(0); // tell the parent that the mapping looks OK.
   }
 
+  // 等待子进程结束
   int status = -1;
   wait(&status);
 
@@ -296,6 +341,7 @@ fork_test(void)
     exit(1);
   }
 
+  // 检查 p1 p2 指向的映射内存里的内容是否不变
   // check that the parent's mappings are still there.
   _v1(p1);
   _v1(p2);
