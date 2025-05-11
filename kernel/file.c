@@ -134,6 +134,7 @@ fileread(struct file *f, uint64 addr, int n)
 int
 filewrite(struct file *f, uint64 addr, int n)
 {
+  // printf("in filewrite, addr = %p, n = %d, f->writeable = %d\n", addr, n, f->writable);
   int r, ret = 0;
 
   if(f->writable == 0)
@@ -173,10 +174,12 @@ filewrite(struct file *f, uint64 addr, int n)
       i += r;
     }
     ret = (i == n ? n : -1);
+    // printf("in filewrite, ret1 = %d\n", ret);
   } else {
     panic("filewrite");
   }
 
+  // printf("in filewrite, ret2 = %d\n", ret);
   return ret;
 }
 

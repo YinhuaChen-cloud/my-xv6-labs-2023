@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct cpu cpus[NCPU];
 
@@ -277,6 +280,10 @@ growproc(int n)
   return 0;
 }
 
+// 修改 fork 以确保子进程具有与父进程相同的映射区域。不要忘记增加 VMA 的 struct file 的引用计数。
+// 在子进程的页面错误处理程序中，分配一个新的物理页面而不是与父进程共享页面是可以的。后者会更酷，
+// 但需要更多的实现工作。运行 mmaptest；它应该通过 mmap_test 和 fork_test。
+
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
 int
@@ -289,6 +296,14 @@ fork(void)
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
+  }
+
+  // 拷贝父进程的 vmas 给子进程
+  memmove(np->vmas, p->vmas, sizeof(VMA) * VMA_SIZE);
+  for(int i = 0; i < VMA_SIZE; i++) {
+    if(np->vmas[i].used) {
+      np->vmas[i].fp->ref++;
+    }
   }
 
   // Copy user memory from parent to child.
@@ -362,6 +377,14 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
+
+  // 释放掉所有的 VMA
+  for(int i = 0; i < VMA_SIZE; i++) {
+    if(p->vmas[i].used) {
+      uvmunmap(p->pagetable, p->vmas[i].addr, p->vmas[i].length / PGSIZE, 1);
+    }
+  }
+  memset(p->vmas, 0, sizeof(VMA) * VMA_SIZE);
 
   begin_op();
   iput(p->cwd);
@@ -651,6 +674,7 @@ either_copyout(int user_dst, uint64 dst, void *src, uint64 len)
 int
 either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 {
+  // printf("in either_copyin, src = %p, len = %d\n", src, len);
   struct proc *p = myproc();
   if(user_src){
     return copyin(p->pagetable, dst, src, len);

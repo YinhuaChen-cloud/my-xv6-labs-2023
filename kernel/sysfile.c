@@ -597,19 +597,19 @@ similarVMA(uint64 addr, uint64 length, VMA vma)
   struct proc *p = myproc();
   int i;
   for(i = 0; i < VMA_SIZE; i++) {
-    if(!(p->vmas[i].used)) {
-      p->vmas[i].addr    = addr;
-      p->vmas[i].length  = length;
-      p->vmas[i].prot    = vma.prot;
-      p->vmas[i].flags   = vma.flags;
-      p->vmas[i].fp      = vma.fp;
-      p->vmas[i].offset  = vma.offset;
-      p->vmas[i].used    = 1;
-      p->vmas[i].fp->ref++;
-    }
+    if(!(p->vmas[i].used))
+      break;
   }
   if(i >= VMA_SIZE)
     return -1;
+  p->vmas[i].addr    = addr;
+  p->vmas[i].length  = length;
+  p->vmas[i].prot    = vma.prot;
+  p->vmas[i].flags   = vma.flags;
+  p->vmas[i].fp      = vma.fp;
+  p->vmas[i].offset  = vma.offset;
+  p->vmas[i].used    = 1;
+  p->vmas[i].fp->ref++;
   return 0;
 }
 
@@ -654,7 +654,7 @@ sys_munmap(void)
       }
       // 如果 flags 属于 SHRAED，释放后要写回文件
       // int filewrite(struct file *f, uint64 addr, int n)
-      if(p->vmas[i].flags == MAP_SHARED && filewrite(p->vmas[i].fp, addr, length) < 0) {
+      if(p->vmas[i].flags == MAP_SHARED && (p->vmas[i].prot & PROT_WRITE) && filewrite(p->vmas[i].fp, addr, length) < 0) {
         printf("munmap: filewrite failure\n");
         return -1;
       }
@@ -677,6 +677,7 @@ sys_munmap(void)
       // 上面的情况都要释放 VMA，这里直接释放即可
       p->vmas[i].used = 0;
       p->vmas[i].fp->ref--;
+      uvmunmap(p->pagetable, addr, length / PGSIZE, 1);
       // 已经释放 VMA, 可以 break
       break;
     }
