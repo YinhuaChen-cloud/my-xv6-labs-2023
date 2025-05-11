@@ -81,6 +81,20 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+// lab: mmap - 跟踪每个进程 mmap 映射的内容。定义一个与“应用程序的虚拟内存”讲座中描述的 VMA
+// （虚拟内存区域）相对应的结构。这应该记录由 mmap 创建的虚拟内存范围的地址、长度、权限、
+// 文件等。由于 xv6 内核中没有内核内存分配器，因此可以声明一个固定大小的 VMA 数组，并根据
+// 需要从中分配。大小为 16 应该足够。 
+typedef struct {
+    uint64 addr;        // 起始地址
+    uint64 length;      // 长度
+    int prot;           // 权限
+    struct file* fp;    // 文件指针
+    uint64 offset;      // 文件偏移
+} VMA;
+
+#define VMA_SIZE 16
+
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -104,4 +118,6 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  VMA vmas[VMA_SIZE];          // lab: mmap: 大小为 16 的 VMA 映射表
+  int n_vma;                   // lab: mmap: 表示 VMA 映射表的数量
 };

@@ -449,3 +449,33 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+static int page_depth = 0;
+
+// Recursively print page-table pages.
+// All invalid PTEs will not be printed
+void
+vmprint(pagetable_t pagetable)
+{
+  if(page_depth == 0) {
+    printf("page table %p\n", (uint64)pagetable);
+  }
+  page_depth++;
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      // this is a valid PTE
+      uint64 child = PTE2PA(pte);
+      for(int k = 0; k < page_depth; k++) printf(" .."); 
+      printf("%d: pte 0x%p pa %p\n", i, pte, child);
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+        // this PTE points to a lower-level page table.
+        vmprint((pagetable_t)child);
+      }
+    }
+    // do not print invalid PTEs
+  }
+  page_depth--;
+}
+

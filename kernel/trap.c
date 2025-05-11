@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -49,6 +52,9 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
+
+  // 读取 scause 获取异常发生原因 
+  uint64 scause = r_scause();
   
   if(r_scause() == 8){
     // system call
@@ -67,6 +73,50 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(scause == 0xd || scause == 0xf) {
+    // 如果发生 load/store page fault
+
+    // - 添加代码以使 mmap-ed 区域的页面错误分配一个物理页面的内存，将相关文件的 4096 字节读取到该页面，
+    // 并将其映射到用户地址空间。使用 readi 读取文件，该文件需要一个偏移参数来读取文件（但是您将不得不锁定
+    // 解锁传递给 readi 的 inode）。不要忘记正确设置页面的权限。运行 mmaptest；它应该到达第一个 munmap。
+
+    // 检测触发异常的地址是否属于 mmap 的映射内存，若不属于，kill 掉这个进程
+    // 获取触发异常的地址
+    uint64 addr = r_stval();
+    // 扫描 p->vmas, 看是否属于其中任意一个 VMA
+    int i;
+    for(i = 0; i < p->n_vma; i++) {
+      if(addr >= p->vmas[i].addr && addr < p->vmas[i].addr + p->vmas[i].length) 
+        break;
+    }
+    // 若属于，分配内存页，读取文件相应内容 
+    if(i < p->n_vma) {
+        // 获取虚拟地址下界
+        uint64 va = PGROUNDDOWN(addr);
+        // 分配一页
+        char *mem = kalloc();
+        if(mem == 0) {
+          // 内存不足则杀死进程，并返回
+          printf("usertrap(): memory not enough\n");
+          setkilled(p);
+        }
+        // 置空一页
+        memset(mem, 0, PGSIZE);
+        // 读取文件内容到这一页面里
+        uint tot = readi(p->vmas[i].fp->ip, 0, (uint64)mem, p->vmas[i].offset + (va - p->vmas[i].addr), PGSIZE);
+        // 如果读取的内容超过映射范围，那么属于内核实现错误，panic
+        if(va - p->vmas[i].addr + tot > p->vmas[i].length) 
+          panic("usertrap: reading bytes exceeds VMA length");
+        // 把这一页映射给用户空间 va
+        if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, (p->vmas[i].prot << 1) | PTE_U) != 0)
+          panic("mapping failure when page fault in handle_page_fault");
+    }
+    else {
+      // 不属于，则报错，随后 kill 掉进程
+      printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      setkilled(p);
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

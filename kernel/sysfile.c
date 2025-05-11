@@ -504,10 +504,69 @@ sys_pipe(void)
   return 0;
 }
 
+// - 在页面错误处理时懒加载页表。也就是说，mmap 不应分配物理内存或读取文件。相反，在 usertrap
+//  中（或由 usertrap 调用的页面错误处理代码中）执行此操作，就像写时复制实验一样。懒加载的原因
+//  是为了确保对大文件的 mmap 快速，并且对大于物理内存的文件的 mmap 成为可能。
+
+// void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+// addr: 建议的映射起始地址，通常设为 NULL 让内核自动选择
+// length: 要映射的区域长度
+// prot: 内存保护标志，可以是以下值的组合：
+//   PROT_READ: 可读
+//   PROT_WRITE: 可写
+//   PROT_EXEC: 可执行
+//   PROT_NONE: 不可访问
+// flags: 映射类型和选项，常用值：
+//   MAP_SHARED: 共享映射，修改会写回文件
+//   MAP_PRIVATE: 私有映射，修改不会影响原文件(会读取文件上的内容，但不会修改原文件，也不会同步其它进程的更新)
+//   MAP_ANONYMOUS: 匿名映射，不与文件关联
+//   MAP_FIXED: 强制使用指定的地址
+// fd: 文件描述符，匿名映射时设为 -1
+// offset: 文件偏移量，通常为 0
+// 返回值:
+//   成功时返回映射区域的起始地址，失败返回 MAP_FAILED ((void *)-1)
+// 映射的进程内存起始地址由内核选择，映射长度为两个页，内存只读，私有映射，映射文件 f，偏移量为0
+
+// char *p = mmap(0, PGSIZE*2, PROT_READ, MAP_PRIVATE, fd, 0);
 uint64
 sys_mmap(void)
 {
-  return -1;
+  uint64 addr;
+  uint64 length;
+  int prot;
+  int flags;
+  int fd;
+  struct file *fp;
+  uint64 offset;
+
+  // argaddr(0, &addr); 忽略第一个参数，总是自主选择 addr
+  // (使用 p->sz 作为映射的虚拟地址起始)
+  struct proc *p = myproc();
+  addr = p->sz;
+  argaddr(1, &length);
+  argint(2, &prot);
+  argint(3, &flags);
+  argfd(4, &fd, &fp);
+  argaddr(5, &offset);
+
+// - 实现 mmap：在进程的地址空间中找到一个未使用的区域来映射文件，并将一个 VMA 添加到进程的映射区域表中。
+// VMA 应该包含一个指向被映射文件的 struct file 的指针；mmap 应该增加文件的引用计数，以便在文件关闭时结构
+// 不会消失（提示：参见 filedup）。运行 mmaptest：第一个 mmap 应该成功，但是对 mmap-ed 内存的第一次访问将
+// 导致页面错误并杀死 mmaptest。
+  p->vmas[p->n_vma].addr    = addr;
+  p->vmas[p->n_vma].length  = length;
+  p->vmas[p->n_vma].prot    = prot;
+  p->vmas[p->n_vma].fp      = fp;
+  p->vmas[p->n_vma].offset  = offset;
+  fp->ref++;
+
+  p->n_vma++;
+
+  p->sz += length;
+
+  // mmap 成功时，返回映射内存的用户虚拟地址
+  printf("mmap return addr %p\n", addr);
+  return addr;
 }
 
 uint64
