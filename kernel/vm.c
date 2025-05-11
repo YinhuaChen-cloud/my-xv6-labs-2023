@@ -5,6 +5,10 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+#include "sleeplock.h"
+#include "file.h"
 
 /*
  * the kernel's page table.
@@ -393,8 +397,40 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
+    if(pa0 == 0) {
+      // 类似 lazy allocation 那个实验，这里需要判断 va0 是否属于 VMA 数组
+      struct proc *p = myproc();
+      int i;
+      for(i = 0; i < VMA_SIZE; i++) {
+        if(p->vmas[i].used && va0 >= p->vmas[i].addr && va0 < p->vmas[i].addr + p->vmas[i].length) 
+          break;
+      }
+      if(i < VMA_SIZE) {
+        // 属于 VMA 数组，分配页
+        char *mem = kalloc();
+        if(mem == 0) {
+          // 内存不足则杀死进程，并返回
+          printf("usertrap(): memory not enough\n");
+          setkilled(p);
+        }
+        // 置空一页
+        memset(mem, 0, PGSIZE);
+        // 读取文件内容到这一页面里
+        uint tot = readi(p->vmas[i].fp->ip, 0, (uint64)mem, p->vmas[i].offset + (va0 - p->vmas[i].addr), PGSIZE);
+        // 如果读取的内容超过映射范围，那么属于内核实现错误，panic
+        if(va0 - p->vmas[i].addr + tot > p->vmas[i].length) 
+          panic("usertrap: reading bytes exceeds VMA length");
+        // 把这一页映射给用户空间 va
+        if(mappages(p->pagetable, va0, PGSIZE, (uint64)mem, (p->vmas[i].prot << 1) | PTE_U) != 0)
+          panic("mapping failure when page fault in handle_page_fault");
+        // 重新查一次 pa0
+        pa0 = walkaddr(pagetable, va0);
+      }
+      else {
+        // 不属于 VMA 数组，返回 -1
+        return -1;
+      }
+    }
     n = PGSIZE - (srcva - va0);
     if(n > len)
       n = len;

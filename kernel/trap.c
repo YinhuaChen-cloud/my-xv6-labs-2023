@@ -85,12 +85,12 @@ usertrap(void)
     uint64 addr = r_stval();
     // 扫描 p->vmas, 看是否属于其中任意一个 VMA
     int i;
-    for(i = 0; i < p->n_vma; i++) {
-      if(addr >= p->vmas[i].addr && addr < p->vmas[i].addr + p->vmas[i].length) 
+    for(i = 0; i < VMA_SIZE; i++) {
+      if(p->vmas[i].used && addr >= p->vmas[i].addr && addr < p->vmas[i].addr + p->vmas[i].length) 
         break;
     }
     // 若属于，分配内存页，读取文件相应内容 
-    if(i < p->n_vma) {
+    if(i < VMA_SIZE) {
         // 获取虚拟地址下界
         uint64 va = PGROUNDDOWN(addr);
         // 分配一页
@@ -103,7 +103,9 @@ usertrap(void)
         // 置空一页
         memset(mem, 0, PGSIZE);
         // 读取文件内容到这一页面里
+        ilock(p->vmas[i].fp->ip);
         uint tot = readi(p->vmas[i].fp->ip, 0, (uint64)mem, p->vmas[i].offset + (va - p->vmas[i].addr), PGSIZE);
+        iunlock(p->vmas[i].fp->ip);
         // 如果读取的内容超过映射范围，那么属于内核实现错误，panic
         if(va - p->vmas[i].addr + tot > p->vmas[i].length) 
           panic("usertrap: reading bytes exceeds VMA length");

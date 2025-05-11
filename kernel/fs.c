@@ -518,6 +518,7 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
     if(addr == 0)
       break;
     bp = bread(ip->dev, addr);
+    // 这里一次最多写入一个 BSIZE 的内容
     m = min(n - tot, BSIZE - off%BSIZE);
     if(either_copyin(bp->data + (off % BSIZE), user_src, src, m) == -1) {
       brelse(bp);

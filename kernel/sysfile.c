@@ -549,29 +549,144 @@ sys_mmap(void)
   argfd(4, &fd, &fp);
   argaddr(5, &offset);
 
+  // 这里要求 mmap 的 length 必须是 PGSIZE 的整数倍
+  if(length % PGSIZE != 0)
+    panic("mmap: length is not multiple times of PGSIZE");
+
+  // 如果文件是不可写，而 mmap 参数可写，且文件SHARED，则 return -1
+  if(!(fp->writable) && (prot & PROT_WRITE) && (flags == MAP_SHARED))
+    return -1;
+
 // - 实现 mmap：在进程的地址空间中找到一个未使用的区域来映射文件，并将一个 VMA 添加到进程的映射区域表中。
 // VMA 应该包含一个指向被映射文件的 struct file 的指针；mmap 应该增加文件的引用计数，以便在文件关闭时结构
 // 不会消失（提示：参见 filedup）。运行 mmaptest：第一个 mmap 应该成功，但是对 mmap-ed 内存的第一次访问将
 // 导致页面错误并杀死 mmaptest。
-  p->vmas[p->n_vma].addr    = addr;
-  p->vmas[p->n_vma].length  = length;
-  p->vmas[p->n_vma].prot    = prot;
-  p->vmas[p->n_vma].fp      = fp;
-  p->vmas[p->n_vma].offset  = offset;
+  // 查找一个 VMA
+  int i;
+  for(i = 0; i < VMA_SIZE; i++) {
+    // 查找对应的 VMA
+    if(!(p->vmas[i].used)) 
+      break;
+  }
+  if(i >= VMA_SIZE) {
+    printf("mmap: not enough VMA\n");
+    return -1;
+  }
+  // mmap 不可能映射到同一个虚拟地址上，因为 addr 使用 p->sz
+  p->vmas[i].addr    = addr;
+  p->vmas[i].length  = length;
+  p->vmas[i].prot    = prot;
+  p->vmas[i].flags   = flags;
+  p->vmas[i].fp      = fp;
+  p->vmas[i].offset  = offset;
+  p->vmas[i].used    = 1;
   fp->ref++;
-
-  p->n_vma++;
 
   p->sz += length;
 
   // mmap 成功时，返回映射内存的用户虚拟地址
-  printf("mmap return addr %p\n", addr);
+  if(addr % PGSIZE != 0)
+    panic("mmap: addr %% PGSIZE != 0");
   return addr;
 }
 
+static 
+uint64 
+similarVMA(uint64 addr, uint64 length, VMA vma) 
+{
+  struct proc *p = myproc();
+  int i;
+  for(i = 0; i < VMA_SIZE; i++) {
+    if(!(p->vmas[i].used)) {
+      p->vmas[i].addr    = addr;
+      p->vmas[i].length  = length;
+      p->vmas[i].prot    = vma.prot;
+      p->vmas[i].flags   = vma.flags;
+      p->vmas[i].fp      = vma.fp;
+      p->vmas[i].offset  = vma.offset;
+      p->vmas[i].used    = 1;
+      p->vmas[i].fp->ref++;
+    }
+  }
+  if(i >= VMA_SIZE)
+    return -1;
+  return 0;
+}
+
+// - 实现 munmap：找到地址范围的 VMA 并取消映射指定的页面（提示：使用 uvmunmap）。
+// 如果 munmap 删除了之前 mmap 的所有页面，则应该减少相应 struct file 的引用计数。
+// 如果取消映射的页面已被修改并且文件被映射为 MAP_SHARED，则应将页面写回文件。
+// 查看 filewrite 以获取灵感。
+// - 理想情况下，您的实现只会写回程序实际修改的 MAP_SHARED 页面。RISC-V PTE 中的脏位
+// （D）指示页面是否已被写入。但是，mmaptest 不会检查未修改的页面是否没有被写回；因此，
+// 您可以不查看 D 位就写回页面。
+// - 修改 exit 以取消映射进程的映射区域，就像调用了 munmap 一样。运行 mmaptest；
+// mmap_test 应该通过，但可能不是 fork_test。
+
+// int munmap(void *addr, size_t len);
+// 注意: 要求能分多次进行 munmap
 uint64
 sys_munmap(void)
 {
-  return -1;
+  uint64 addr;
+  uint64 length;
+
+  argaddr(0, &addr);
+  argaddr(1, &length);
+
+  // 这里要求 munmap 的 addr 必须是 PGSIZE 的整数倍
+  if(addr % PGSIZE != 0)
+    panic("munmap: addr is not multiple times of PGSIZE");
+
+  // 这里要求 munmap 的 length 必须是 PGSIZE 的整数倍
+  if(length % PGSIZE != 0)
+    panic("munmap: length is not multiple times of PGSIZE");
+
+  struct proc *p = myproc();
+  int i;
+  for(i = 0; i < VMA_SIZE; i++) {
+    // 查找对应的 VMA
+    if(p->vmas[i].used && addr >= p->vmas[i].addr && addr < p->vmas[i].addr + p->vmas[i].length) {
+      // 如果 munmap 的参数非法，那么 return -1
+      if(addr + length > p->vmas[i].addr + p->vmas[i].length) {
+        printf("munmap: illegal arguments\n");
+        return -1;
+      }
+      // 如果 flags 属于 SHRAED，释放后要写回文件
+      // int filewrite(struct file *f, uint64 addr, int n)
+      if(p->vmas[i].flags == MAP_SHARED && filewrite(p->vmas[i].fp, addr, length) < 0) {
+        printf("munmap: filewrite failure\n");
+        return -1;
+      }
+
+      // 如果 munmap 参数只有部分吻合，则要释放原本的 VMA，创建新的 VMA
+      // 如果左边没有紧邻
+      if(addr > p->vmas[i].addr) {
+        if(similarVMA(p->vmas[i].addr, addr - p->vmas[i].addr, p->vmas[i]) < 0) {
+          printf("munmap: similarVMA1 failure\n");
+          return -1;
+        }
+      }
+      // 如果右边没有紧邻
+      if(addr + length < p->vmas[i].addr + p->vmas[i].length) {
+        if(similarVMA(addr + length, p->vmas[i].addr + p->vmas[i].length - addr - length, p->vmas[i]) < 0){
+          printf("munmap: similarVMA2 failure\n");
+          return -1;
+        }
+      }
+      // 上面的情况都要释放 VMA，这里直接释放即可
+      p->vmas[i].used = 0;
+      p->vmas[i].fp->ref--;
+      // 已经释放 VMA, 可以 break
+      break;
+    }
+  }
+
+  if(i >= VMA_SIZE) {
+    printf("munmap: VMA addr %p not found\n", addr);
+    return -1;
+  }
+
+  return 0;
 }
 

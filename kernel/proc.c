@@ -126,7 +126,6 @@ found:
   p->state = USED;
 
   // lab: mmap 初始化 vma
-  p->n_vma = 0;
   memset(p->vmas, 0, sizeof(VMA) * VMA_SIZE);
 
   // Allocate a trapframe page.

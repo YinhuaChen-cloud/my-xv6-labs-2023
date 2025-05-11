@@ -89,8 +89,10 @@ typedef struct {
     uint64 addr;        // 起始地址
     uint64 length;      // 长度
     int prot;           // 权限
+    int flags;          // 属性(私有/共享)
     struct file* fp;    // 文件指针
     uint64 offset;      // 文件偏移
+    int used;           // 表示是否空闲
 } VMA;
 
 #define VMA_SIZE 16
@@ -119,5 +121,4 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   VMA vmas[VMA_SIZE];          // lab: mmap: 大小为 16 的 VMA 映射表
-  int n_vma;                   // lab: mmap: 表示 VMA 映射表的数量
 };
